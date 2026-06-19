@@ -1,0 +1,15 @@
+# Model weights — never commit these (66 GB)
+models/
+*.safetensors
+*.bin
+*.gguf
+
+# Generated runtime config (scripts auto-write these)
+config/*.yaml
+
+# Logs / results / caches
+*.log
+results/
+__pycache__/
+*.pyc
+.cache/
