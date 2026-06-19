@@ -13,9 +13,12 @@ MODEL_DIR="$REPO_ROOT/models/Mistral-Small-4-NVFP4"
 EAGLE_DIR="$REPO_ROOT/models/Mistral-Small-4-eagle"
 CONFIG_DIR="$REPO_ROOT/config"
 RESULTS_DIR="$REPO_ROOT/results"
-PATCH_FILE="$REPO_ROOT/patches/mistral.py"
-PATCH_TARGET="/opt/venv/lib/python3.12/site-packages/vllm/tokenizers/mistral.py"
-IMAGE="ghcr.io/nvidia-ai-iot/vllm:latest-jetson-thor"
+VLLM_PATCH="$REPO_ROOT/patches/mistral.py"
+VLLM_PATCH_TARGET="/opt/venv/lib/python3.12/site-packages/vllm/tokenizers/mistral.py"
+TF_PATCH="$REPO_ROOT/patches/tokenization_mistral_common.py"
+TF_PATCH_TARGET="/opt/venv/lib/python3.12/site-packages/transformers/tokenization_mistral_common.py"
+BASE_IMAGE="ghcr.io/nvidia-ai-iot/vllm:latest-jetson-thor"
+REASONING_IMAGE="${REASONING_IMAGE:-mistral-small4-thor:reasoning}"
 BACKEND="TRITON_MLA"
 PORT=8003
 CACHE_ROOT="$HOME/thor-vllm-cache/mistral-small4-bench"
@@ -26,7 +29,16 @@ BENCH_MAX_TOKENS=512
 BENCH_RUNS=3
 
 [ ! -d "$MODEL_DIR" ] && { echo "ERROR: model missing — run ./download-models.sh first"; exit 1; }
-PATCH_MOUNT=""; [ -f "$PATCH_FILE" ] && PATCH_MOUNT="-v ${PATCH_FILE}:${PATCH_TARGET}:ro"
+# Decode timing uses /v1/completions and doesn't need the chat patches, but prefer the
+# derived image when present so the server matches production; else base + patch mounts.
+PATCH_MOUNT=""
+if docker image inspect "${REASONING_IMAGE}" &>/dev/null; then
+    IMAGE="${REASONING_IMAGE}"
+else
+    IMAGE="${BASE_IMAGE}"
+    [ -f "$VLLM_PATCH" ] && PATCH_MOUNT="$PATCH_MOUNT -v ${VLLM_PATCH}:${VLLM_PATCH_TARGET}:ro"
+    [ -f "$TF_PATCH" ]   && PATCH_MOUNT="$PATCH_MOUNT -v ${TF_PATCH}:${TF_PATCH_TARGET}:ro"
+fi
 
 sudo nvpmodel -m 1 2>/dev/null && echo "nvpmodel -m 1" || true
 sudo jetson_clocks 2>/dev/null || true

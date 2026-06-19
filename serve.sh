@@ -27,9 +27,14 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_DIR="$REPO_ROOT/models/Mistral-Small-4-NVFP4"
 EAGLE_DIR="$REPO_ROOT/models/Mistral-Small-4-eagle"
 CONFIG_DIR="$REPO_ROOT/config"
-PATCH_FILE="$REPO_ROOT/patches/mistral.py"
-PATCH_TARGET="/opt/venv/lib/python3.12/site-packages/vllm/tokenizers/mistral.py"
-IMAGE="ghcr.io/nvidia-ai-iot/vllm:latest-jetson-thor"
+VLLM_PATCH="$REPO_ROOT/patches/mistral.py"
+VLLM_PATCH_TARGET="/opt/venv/lib/python3.12/site-packages/vllm/tokenizers/mistral.py"
+TF_PATCH="$REPO_ROOT/patches/tokenization_mistral_common.py"
+TF_PATCH_TARGET="/opt/venv/lib/python3.12/site-packages/transformers/tokenization_mistral_common.py"
+BASE_IMAGE="ghcr.io/nvidia-ai-iot/vllm:latest-jetson-thor"
+# Prefer the derived image (patches baked in: chat fix + reasoning_effort). If it
+# isn't built, fall back to the base image and mount the patches read-only.
+REASONING_IMAGE="${REASONING_IMAGE:-mistral-small4-thor:reasoning}"
 BACKEND="TRITON_MLA"
 PORT=8002
 CACHE_ROOT="$HOME/thor-vllm-cache/mistral-small4"
@@ -94,18 +99,23 @@ until [ "$(free -g | awk '/^Mem:/{print $7}')" -gt 95 ]; do
     sudo sync; sudo sysctl -w vm.drop_caches=3 >/dev/null 2>&1; sleep 5
 done
 
-# ── Mounts ─────────────────────────────────────────────────────────────────────
+# ── Image + patch selection ────────────────────────────────────────────────────
 EAGLE_MOUNT=""
 [ -d "$EAGLE_DIR" ] && [ "$MODE" != "no-eagle" ] && EAGLE_MOUNT="-v ${EAGLE_DIR}:/eagle:ro"
-PATCH_MOUNT=""
-if [ -f "$PATCH_FILE" ]; then
-    PATCH_MOUNT="-v ${PATCH_FILE}:${PATCH_TARGET}:ro"
-    echo "chat-fix patch mounted"
-else
-    echo "!! WARNING: $PATCH_FILE missing — /v1/chat/completions will 400 on reasoning_effort"
-fi
 
-docker pull "${IMAGE}" || docker image inspect "${IMAGE}" &>/dev/null || { echo "ERROR: no image."; exit 1; }
+PATCH_MOUNT=""
+if docker image inspect "${REASONING_IMAGE}" &>/dev/null; then
+    IMAGE="${REASONING_IMAGE}"
+    echo "Using derived image ${IMAGE} (patches baked in: chat fix + reasoning_effort)."
+else
+    IMAGE="${BASE_IMAGE}"
+    echo "Derived image not found — using base image + read-only patch mounts."
+    echo "  (build the derived image once with ./build-image.sh for a cleaner setup)"
+    [ -f "$VLLM_PATCH" ] && PATCH_MOUNT="$PATCH_MOUNT -v ${VLLM_PATCH}:${VLLM_PATCH_TARGET}:ro"
+    [ -f "$TF_PATCH" ]   && PATCH_MOUNT="$PATCH_MOUNT -v ${TF_PATCH}:${TF_PATCH_TARGET}:ro"
+    [ -z "$PATCH_MOUNT" ] && echo "!! WARNING: patches missing — /v1/chat/completions will 400 on reasoning_effort"
+    docker pull "${IMAGE}" || docker image inspect "${IMAGE}" &>/dev/null || { echo "ERROR: no image."; exit 1; }
+fi
 
 CONTAINER_NAME="vllm-mistral-small4-$(date +%s)"
 echo ""
