@@ -17,8 +17,9 @@
 #   ./serve.sh            # default: Eagle-3, 64k ctx
 #   ./serve.sh no-eagle   # no spec decoding, full 256k ctx
 #
-# Reasoning note: reasoning_effort="high" is silently dropped (instruct mode) until the
-# container's transformers/mistral_common are upgraded. Chat + tool-calling work.
+# Reasoning note: with both patches (derived image), reasoning_effort="high" makes the model
+# reason, but the trace lands inline in content (split on [/THINK]); see README. Chat +
+# tool-calling work.
 
 set -euo pipefail
 MODE="${1:-default}"
